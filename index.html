@@ -1,82 +1,37 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Landscape word cards (full-width, constant-height scale)</title>
+  <title>Cards: per-length font instance selection</title>
 
   <style>
-    :root {
-      --cardW: 90mm;
+    :root{
+      --cardW: 9cm;
       --gap: 10px;
       --stroke: 1px solid #000;
       --pad: 0;
-      /* card padding (print-friendly) */
-      --fg: #000;
-      --bg: #fff;
     }
 
-    body {
-      margin: 16px;
-      background: #fff;
-      color: #000;
-      font-family: system-ui, sans-serif;
-    }
+    body{ margin:16px; background:#fff; color:#000; font-family: system-ui, sans-serif; }
+    #deck{ display:flex; flex-wrap:wrap; gap:var(--gap); align-items:flex-start; }
 
-    .controls {
-      display: flex;
-      gap: 12px;
-      align-items: center;
-      margin-bottom: 14px;
-    }
-
-    #deck {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--gap);
-      align-items: flex-start;
-    }
-
-    .card {
+    .card{
       width: var(--cardW);
       aspect-ratio: 9 / 3;
-      /* 9×3 (3:1 landscape) */
       border: var(--stroke);
       border-radius: 0;
-      /* no rounding */
       box-sizing: border-box;
       padding: var(--pad);
-      background: var(--bg);
       overflow: hidden;
     }
+    .card svg{ width:100%; height:100%; display:block; }
+    .card path{ fill:#000; }
 
-    .card svg {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    .card path {
-      fill: var(--fg);
-    }
-
-    @media print {
-      body {
-        margin: 0;
-      }
-
-      .controls {
-        display: none;
-      }
-
-      #deck {
-        gap: 6mm;
-      }
-
-      .card {
-        break-inside: avoid;
-      }
+    @media print{
+      body{ margin:0; }
+      #deck{ gap:6mm; }
+      .card{ break-inside: avoid; }
     }
   </style>
 
@@ -85,14 +40,6 @@
 </head>
 
 <body>
-  <div class="controls">
-    <label>
-      Font file (TTF/OTF):
-      <input id="fontFile" type="file" accept=".ttf,.otf" />
-    </label>
-    <span style="font-size:12px;">Optional: place <code>font.ttf</code> next to this HTML to auto-load.</span>
-  </div>
-
   <div id="deck"></div>
 
   <script>
@@ -100,54 +47,93 @@
       throw new Error("words.js must define: const words = [ ... ];");
     }
 
-    // SVG internal coordinates with exact 9×3 aspect ratio
+    // ============================================================
+    // 1) FREE MAP OF STATIC FONT INSTANCES (key -> path)
+    // ============================================================
+    const FONT_FILES = {
+      "w1": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-Medium.ttf",
+      "w2": "./fonts/Merriweather/static/Merriweather_24pt-Light.ttf",
+      "w3": "./fonts/Merriweather/static/Merriweather_24pt-Medium.ttf",
+      "light24c": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-Light.ttf",
+      "light24": "./fonts/Merriweather/static/Merriweather_24pt-Light.ttf",
+      "extrabold24c": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-ExtraBold.ttf",
+      "extrabold24": "./fonts/Merriweather/static/Merriweather_24pt-ExtraBold.ttf",
+      "light120c": "./fonts/Merriweather/static/Merriweather_120pt_SemiCondensed-Light.ttf",
+      "extrabold120c": "./fonts/Merriweather/static/Merriweather_120pt_SemiCondensed-ExtraBold.ttf",
+      "extrabold120": "./fonts/Merriweather/static/Merriweather_120pt-ExtraBold.ttf",
+
+    };
+
+    // Load every font in the map up-front.
+    // (If this is too heavy later, you can prune the map or lazy-load, but you asked for preload.)
+    const fonts = {};         // key -> opentype.Font
+    const fitters = {};       // key -> fitWord function
+
+    async function loadAllFonts() {
+      const entries = Object.entries(FONT_FILES);
+      for (const [key, url] of entries) {
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`Font fetch failed: ${res.status} ${url}`);
+        const buf = await res.arrayBuffer();
+        fonts[key] = opentype.parse(buf);
+      }
+    }
+
+    // ============================================================
+    // 2) Rendering model: SVG paths, full-width fit, constant-height scale,
+    //    x-height baseline centering. (Same as your working approach.)
+    // ============================================================
     const VIEW_W = 300;
     const VIEW_H = 100;
 
-    // Inner padding in viewBox units (independent of CSS card padding)
     const VB_PAD_X = 6;
     const VB_PAD_Y = 6;
 
-    // Geometry size for outline extraction
     const FONT_SIZE = 1000;
 
-    // Reference string to define the “line height” used for ALL words
-    // (your requirement: scale as if the word had f+p)
-    const HEIGHT_REF = "Álfp";
+    // Height reference: defines the “as if has f and p” scale.
+    // Keep what worked for you; you can tune it later.
+    const HEIGHT_REF = "?g";
 
-    // Letter spacing (tracking):
-    // 0.00 = default font spacing (advance widths + kerning).
-    // Positive loosens; negative tightens.
-    // Unit is em relative to FONT_SIZE (0.02 = +2% of font size per gap).
-    const TRACKING_EM = 0.00;
+    // Tracking is intentionally controlled ONLY in the if/else chain (below).
+    // This global default is just a fallback.
+    const DEFAULT_TRACKING_EM = 0.00;
 
     const deck = document.getElementById("deck");
-    const fontInput = document.getElementById("fontFile");
 
-    function svgEl(name) {
+    function svgEl(name){
       return document.createElementNS("http://www.w3.org/2000/svg", name);
     }
-
-    function clearDeck() {
+    function clearDeck(){
       while (deck.firstChild) deck.removeChild(deck.firstChild);
     }
 
-    // Build one combined word-outline path + pen extents (includes spaces via advances)
-    function buildWordPathHorizontal(font, word, trackingEm) {
+    function getXHeightInPathUnits(font){
+      const scale = FONT_SIZE / font.unitsPerEm;
+      const os2 = font.tables && font.tables.os2;
+      if (os2 && typeof os2.sxHeight === "number" && os2.sxHeight > 0) {
+        return os2.sxHeight * scale;
+      }
+      const gx = font.charToGlyph("x").getPath(0, 0, FONT_SIZE);
+      const bb = gx.getBoundingBox();
+      const yTop = Math.min(bb.y1, bb.y2);
+      return Math.max(1, -yTop);
+    }
+
+    function buildWordPathHorizontal(font, word, trackingEm){
       const scale = FONT_SIZE / font.unitsPerEm;
       const trackingPx = trackingEm * FONT_SIZE;
 
       const p = new opentype.Path();
-
       let x = 0;
       let prev = null;
 
-      for (let i = 0; i < word.length; i++) {
+      for (let i = 0; i < word.length; i++){
         const glyph = font.charToGlyph(word[i]);
 
-        if (prev) {
+        if (prev){
           x += font.getKerningValue(prev, glyph) * scale;
-          x += trackingPx; // <-- tracking/letter-spacing is applied here
+          x += trackingPx; // tracking here
         }
 
         p.extend(glyph.getPath(x, 0, FONT_SIZE));
@@ -160,44 +146,37 @@
       return { path: p, xStart: 0, xEnd: x };
     }
 
-    // Precompute a constant vertical scale using HEIGHT_REF, but center each word by its own bbox.
-    function makeFitter(font) {
+    function makeFitter(font, trackingEmForRef){
       const targetW = VIEW_W - 2 * VB_PAD_X;
       const targetH = VIEW_H - 2 * VB_PAD_Y;
 
-      // Constant vertical scale (same for all words): “as if fp exists”
-      const ref = buildWordPathHorizontal(font, HEIGHT_REF, TRACKING_EM);
+      // constant vertical scale from ref string
+      const ref = buildWordPathHorizontal(font, HEIGHT_REF, trackingEmForRef);
       const refBB = ref.path.getBoundingBox();
       const refTop = Math.min(refBB.y1, refBB.y2);
       const refBot = Math.max(refBB.y1, refBB.y2);
       const refH = (refBot - refTop) || 1;
 
-      const sy = targetH / refH; // fixed vertical scaling (gives same 'a' size everywhere)
+      const sy = targetH / refH;
 
-      // X-height metric (in path units), used to place the baseline
+      // baseline chosen so x-height center sits at card center
       const xHeight = getXHeightInPathUnits(font);
       const baselineY = (VB_PAD_Y + targetH / 2) + sy * (xHeight / 2);
-      // Explanation: x-height center is at y = -xHeight/2 (above baseline).
-      // Want that mapped to card center => baseline = center + sy*(xHeight/2).
 
-      return function fitWord(out) {
+      return function fitWord(out){
         const { path, xStart, xEnd } = out;
         const bb = path.getBoundingBox();
 
-        // Width bounds include advances (spaces) + outline overhangs
-        let left = xStart;
-        let right = xEnd;
+        let left = xStart, right = xEnd;
         if (bb.x1 < left) left = bb.x1;
         if (bb.x2 > right) right = bb.x2;
 
         const bw = (right - left) || 1;
         const sx = targetW / bw;
 
-        // Horizontal centering (keeps symmetry with leading/trailing spaces)
         const midX = (left + right) / 2;
         const tx = (VB_PAD_X + targetW / 2) - midX * sx;
 
-        // Vertical position from baseline (not bbox)
         const ty = baselineY;
 
         return {
@@ -207,38 +186,15 @@
       };
     }
 
-
-    function getXHeightInPathUnits(font) {
-      const scale = FONT_SIZE / font.unitsPerEm;
-
-      // If OS/2 table has sxHeight, use it (best when present)
-      const os2 = font.tables && font.tables.os2;
-      if (os2 && typeof os2.sxHeight === "number" && os2.sxHeight > 0) {
-        return os2.sxHeight * scale; // positive
-      }
-
-      // Fallback: measure glyph 'x' (works for most Latin fonts)
-      const gx = font.charToGlyph("x").getPath(0, 0, FONT_SIZE);
-      const bb = gx.getBoundingBox();
-
-      // In opentype.js/SVG coords: baseline is y=0, up is negative.
-      // x-height ≈ distance from baseline to top of 'x' => -yTop
-      const yTop = Math.min(bb.y1, bb.y2);
-      return Math.max(1, -yTop); // positive
-    }
-
-
-    function buildCard(font, rawWord, fitWord) {
+    function buildCard(font, word, trackingEm, fitWord){
       const card = document.createElement("div");
       card.className = "card";
 
       const svg = svgEl("svg");
       svg.setAttribute("viewBox", `0 0 ${VIEW_W} ${VIEW_H}`);
       svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-      svg.setAttribute("role", "img");
-      svg.setAttribute("aria-label", rawWord);
 
-      const out = buildWordPathHorizontal(font, rawWord, TRACKING_EM);
+      const out = buildWordPathHorizontal(font, word, trackingEm);
       const fitted = fitWord(out);
 
       const g = svgEl("g");
@@ -253,46 +209,80 @@
       return card;
     }
 
-    function render(font) {
+    // ============================================================
+    // 3) ONE SINGLE PLACE TO TUNE: if/else chain
+    //    You adjust only this block to test visually.
+    // ============================================================
+    function chooseStyle(rawWord) {
+      const len = rawWord.length;
+
+      // Default outputs:
+      let fontKey = "extrabold120c";
+      let trackingEm = DEFAULT_TRACKING_EM;
+      let padLeft = 1;   // number of regular spaces to add
+      let padRight = 1;
+
+      // ---- ONLY EDIT BELOW THIS LINE ----
+      if (false) {
+
+      }
+      else if (len <= 1) {
+        fontKey = "w1";
+        padLeft = 2; padRight = 2;
+      }
+      else if (len <= 2) {
+        fontKey = "w2";
+        trackingEm = -0.006;
+        padLeft = 1; padRight = 1;
+      } 
+        else if (len <= 3) {
+        fontKey = "w3";
+        trackingEm = 0.000;
+        padLeft = 1; padRight = 1;
+      } else if (len <= 4) {
+        fontKey = "extrabold24c";
+        trackingEm = 0.002;
+        padLeft = 1; padRight = 1;
+      } else {
+        fontKey = "extrabold120";
+        trackingEm = 0.004;    // more air for long words
+        padLeft = 0; padRight = 0;
+      }
+      // ---- ONLY EDIT ABOVE THIS LINE ----
+
+      const word = " ".repeat(padLeft) + rawWord + " ".repeat(padRight);
+      return { fontKey, trackingEm, word };
+    }
+
+    // ============================================================
+    // 4) Render (preload everything, then build)
+    // ============================================================
+    async function main(){
+      await loadAllFonts();
+
+      // Build fitters per fontKey, using that fontKey’s current ref-tracking.
+      // Since tracking is chosen per word, we create fitters lazily per (fontKey, trackingEm).
+      // To keep logic centralized, we cache by a combined key.
+      const fitterByKey = {}; // `${fontKey}|${trackingEm}` -> function
+
       clearDeck();
 
-      const fitWord = makeFitter(font);
+      for (const raw of words){
+        const { fontKey, trackingEm, word } = chooseStyle(raw);
 
-      for (const w of words) {
-        const padded = w ;
-        deck.appendChild(buildCard(font, padded, fitWord));
+        const font = fonts[fontKey];
+        if (!font) throw new Error(`Missing fontKey in FONT_FILES: ${fontKey}`);
+
+        const fk = `${fontKey}|${trackingEm}`;
+        if (!fitterByKey[fk]) {
+          fitterByKey[fk] = makeFitter(font, trackingEm);
+        }
+
+        deck.appendChild(buildCard(font, word, trackingEm, fitterByKey[fk]));
       }
     }
 
-    async function loadFontFromFile(file) {
-      const buf = await file.arrayBuffer();
-      return opentype.parse(buf);
-    }
-
-    async function loadFontFromUrl(url) {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Font fetch failed: ${res.status}`);
-      const buf = await res.arrayBuffer();
-      return opentype.parse(buf);
-    }
-
-    // Optional auto-load ./font.ttf
-    (async () => {
-      try {
-        const font = await loadFontFromUrl("./font.ttf");
-        render(font);
-      } catch {
-        // user can choose a font file
-      }
-    })();
-
-    fontInput.addEventListener("change", async (e) => {
-      const file = e.target.files && e.target.files[0];
-      if (!file) return;
-      const font = await loadFontFromFile(file);
-      render(font);
-    });
+    main().catch(console.error);
   </script>
 </body>
-
 </html>
