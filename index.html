@@ -1,47 +1,87 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Glyph-box vertical cards</title>
+  <title>Landscape word cards (full-width, constant-height scale)</title>
 
   <style>
-    :root{
-      --cardW: 140px;
-      --gap: 14px;
-      --radius: 14px;
-      --border: 1px solid #999;
-      --fg: #111;
+    :root {
+      --cardW: 90mm;
+      --gap: 10px;
+      --stroke: 1px solid #000;
+      --pad: 0;
+      /* card padding (print-friendly) */
+      --fg: #000;
       --bg: #fff;
     }
 
-    body{ font-family: system-ui, sans-serif; margin: 16px; background: #fafafa; }
-    .controls{ display:flex; gap:12px; align-items:center; margin-bottom: 14px; }
-    .hint{ font-size: 12px; color:#444; }
+    body {
+      margin: 16px;
+      background: #fff;
+      color: #000;
+      font-family: system-ui, sans-serif;
+    }
 
-    #deck{
-      display:flex;
-      gap: var(--gap);
+    .controls {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+
+    #deck {
+      display: flex;
       flex-wrap: wrap;
+      gap: var(--gap);
       align-items: flex-start;
     }
 
-    .card{
+    .card {
       width: var(--cardW);
-      height: 9cm;
-      width: 3cm;
-      border: var(--border);
-      padding: 0 1rem;
-      overflow:hidden;
+      aspect-ratio: 9 / 3;
+      /* 9×3 (3:1 landscape) */
+      border: var(--stroke);
+      border-radius: 0;
+      /* no rounding */
+      box-sizing: border-box;
+      padding: var(--pad);
       background: var(--bg);
+      overflow: hidden;
     }
 
-    .card svg{ width:100%; height:100%; display:block; }
-    .card path{ fill: var(--fg); }
+    .card svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .card path {
+      fill: var(--fg);
+    }
+
+    @media print {
+      body {
+        margin: 0;
+      }
+
+      .controls {
+        display: none;
+      }
+
+      #deck {
+        gap: 6mm;
+      }
+
+      .card {
+        break-inside: avoid;
+      }
+    }
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
-    <script src="ellipsort.js"></script>
+  <script src="words.js"></script>
 </head>
 
 <body>
@@ -50,110 +90,186 @@
       Font file (TTF/OTF):
       <input id="fontFile" type="file" accept=".ttf,.otf" />
     </label>
-    <span class="hint">Optional: place <code>font.ttf</code> next to this HTML to auto-load.</span>
+    <span style="font-size:12px;">Optional: place <code>font.ttf</code> next to this HTML to auto-load.</span>
   </div>
 
   <div id="deck"></div>
 
   <script>
+    if (typeof words === "undefined" || !Array.isArray(words)) {
+      throw new Error("words.js must define: const words = [ ... ];");
+    }
 
-    // --- Geometry in SVG user units (fixed for all cards) ---
-    const VIEW_W = 100;
-    const VIEW_H = 300;
+    // SVG internal coordinates with exact 9×3 aspect ratio
+    const VIEW_W = 300;
+    const VIEW_H = 100;
 
-    // Constant vertical gap between letter boxes (same for every word)
-    const GAP = 8;          // increase/decrease to control spacing
-    const PAD_Y = 10;       // top/bottom padding in view units
-    const INSET = 0.98;     // <1 leaves margin inside each letter box; set 1 for edge-to-edge
+    // Inner padding in viewBox units (independent of CSS card padding)
+    const VB_PAD_X = 6;
+    const VB_PAD_Y = 6;
 
-    // opentype working font size (arbitrary but consistent)
+    // Geometry size for outline extraction
     const FONT_SIZE = 1000;
+
+    // Reference string to define the “line height” used for ALL words
+    // (your requirement: scale as if the word had f+p)
+    const HEIGHT_REF = "Álfp";
+
+    // Letter spacing (tracking):
+    // 0.00 = default font spacing (advance widths + kerning).
+    // Positive loosens; negative tightens.
+    // Unit is em relative to FONT_SIZE (0.02 = +2% of font size per gap).
+    const TRACKING_EM = 0.00;
 
     const deck = document.getElementById("deck");
     const fontInput = document.getElementById("fontFile");
 
-    function svgEl(name){
+    function svgEl(name) {
       return document.createElementNS("http://www.w3.org/2000/svg", name);
     }
 
-    function clearDeck(){
+    function clearDeck() {
       while (deck.firstChild) deck.removeChild(deck.firstChild);
     }
 
-    function buildCard(font, word){
+    // Build one combined word-outline path + pen extents (includes spaces via advances)
+    function buildWordPathHorizontal(font, word, trackingEm) {
+      const scale = FONT_SIZE / font.unitsPerEm;
+      const trackingPx = trackingEm * FONT_SIZE;
+
+      const p = new opentype.Path();
+
+      let x = 0;
+      let prev = null;
+
+      for (let i = 0; i < word.length; i++) {
+        const glyph = font.charToGlyph(word[i]);
+
+        if (prev) {
+          x += font.getKerningValue(prev, glyph) * scale;
+          x += trackingPx; // <-- tracking/letter-spacing is applied here
+        }
+
+        p.extend(glyph.getPath(x, 0, FONT_SIZE));
+
+        const adv = (glyph.advanceWidth || font.unitsPerEm) * scale;
+        x += adv;
+        prev = glyph;
+      }
+
+      return { path: p, xStart: 0, xEnd: x };
+    }
+
+    // Precompute a constant vertical scale using HEIGHT_REF, but center each word by its own bbox.
+    function makeFitter(font) {
+      const targetW = VIEW_W - 2 * VB_PAD_X;
+      const targetH = VIEW_H - 2 * VB_PAD_Y;
+
+      // Constant vertical scale (same for all words): “as if fp exists”
+      const ref = buildWordPathHorizontal(font, HEIGHT_REF, TRACKING_EM);
+      const refBB = ref.path.getBoundingBox();
+      const refTop = Math.min(refBB.y1, refBB.y2);
+      const refBot = Math.max(refBB.y1, refBB.y2);
+      const refH = (refBot - refTop) || 1;
+
+      const sy = targetH / refH; // fixed vertical scaling (gives same 'a' size everywhere)
+
+      // X-height metric (in path units), used to place the baseline
+      const xHeight = getXHeightInPathUnits(font);
+      const baselineY = (VB_PAD_Y + targetH / 2) + sy * (xHeight / 2);
+      // Explanation: x-height center is at y = -xHeight/2 (above baseline).
+      // Want that mapped to card center => baseline = center + sy*(xHeight/2).
+
+      return function fitWord(out) {
+        const { path, xStart, xEnd } = out;
+        const bb = path.getBoundingBox();
+
+        // Width bounds include advances (spaces) + outline overhangs
+        let left = xStart;
+        let right = xEnd;
+        if (bb.x1 < left) left = bb.x1;
+        if (bb.x2 > right) right = bb.x2;
+
+        const bw = (right - left) || 1;
+        const sx = targetW / bw;
+
+        // Horizontal centering (keeps symmetry with leading/trailing spaces)
+        const midX = (left + right) / 2;
+        const tx = (VB_PAD_X + targetW / 2) - midX * sx;
+
+        // Vertical position from baseline (not bbox)
+        const ty = baselineY;
+
+        return {
+          d: path.toPathData(2),
+          transform: `translate(${tx.toFixed(3)} ${ty.toFixed(3)}) scale(${sx.toFixed(6)} ${sy.toFixed(6)})`
+        };
+      };
+    }
+
+
+    function getXHeightInPathUnits(font) {
+      const scale = FONT_SIZE / font.unitsPerEm;
+
+      // If OS/2 table has sxHeight, use it (best when present)
+      const os2 = font.tables && font.tables.os2;
+      if (os2 && typeof os2.sxHeight === "number" && os2.sxHeight > 0) {
+        return os2.sxHeight * scale; // positive
+      }
+
+      // Fallback: measure glyph 'x' (works for most Latin fonts)
+      const gx = font.charToGlyph("x").getPath(0, 0, FONT_SIZE);
+      const bb = gx.getBoundingBox();
+
+      // In opentype.js/SVG coords: baseline is y=0, up is negative.
+      // x-height ≈ distance from baseline to top of 'x' => -yTop
+      const yTop = Math.min(bb.y1, bb.y2);
+      return Math.max(1, -yTop); // positive
+    }
+
+
+    function buildCard(font, rawWord, fitWord) {
       const card = document.createElement("div");
       card.className = "card";
 
       const svg = svgEl("svg");
       svg.setAttribute("viewBox", `0 0 ${VIEW_W} ${VIEW_H}`);
-      // viewBox matches card aspect ratio (1:3), so "meet" is fine; "none" also works.
       svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", rawWord);
 
-      const L = word.length;
-      const usableH = VIEW_H - 2 * PAD_Y - (L - 1) * GAP;
-      const boxH = usableH / L;
-      const boxW = VIEW_W;
+      const out = buildWordPathHorizontal(font, rawWord, TRACKING_EM);
+      const fitted = fitWord(out);
 
-      if (boxH <= 0) {
-        console.warn("Not enough height for word:", word);
-        return card;
-      }
+      const g = svgEl("g");
+      g.setAttribute("transform", fitted.transform);
 
-      for (let i = 0; i < L; i++){
-        const ch = word[i];
+      const path = svgEl("path");
+      path.setAttribute("d", fitted.d);
 
-        // Get glyph outline at origin
-        const gp = font.getPath(ch, 0, 0, FONT_SIZE);
-        const bb = gp.getBoundingBox();
-        const gw = bb.x2 - bb.x1;
-        const gh = bb.y2 - bb.y1;
-
-        // Skip empty glyphs safely
-        if (gw <= 0 || gh <= 0) continue;
-
-        // Letter box top-left
-        const x0 = 0;
-        const y0 = PAD_Y + i * (boxH + GAP);
-
-        // Scale glyph to (boxW, boxH), with optional inset
-        const targetW = boxW * INSET;
-        const targetH = boxH * INSET;
-        const sx = targetW / gw;
-        const sy = targetH / gh;
-
-        // Center glyph inside its letter box
-        const scaledW = gw * sx;
-        const scaledH = gh * sy;
-        const tx = x0 + (boxW - scaledW) / 2 - bb.x1 * sx;
-        const ty = y0 + (boxH - scaledH) / 2 - bb.y1 * sy;
-
-        const g = svgEl("g");
-        g.setAttribute("transform", `translate(${tx} ${ty}) scale(${sx} ${sy})`);
-
-        const path = svgEl("path");
-        path.setAttribute("d", gp.toPathData(2));
-
-        g.appendChild(path);
-        svg.appendChild(g);
-      }
-
+      g.appendChild(path);
+      svg.appendChild(g);
       card.appendChild(svg);
       return card;
     }
 
-    function render(font){
+    function render(font) {
       clearDeck();
-      for (const w of ellipsort){
-        deck.appendChild(buildCard(font, w));
+
+      const fitWord = makeFitter(font);
+
+      for (const w of words) {
+        const padded = w ;
+        deck.appendChild(buildCard(font, padded, fitWord));
       }
     }
 
-    async function loadFontFromFile(file){
+    async function loadFontFromFile(file) {
       const buf = await file.arrayBuffer();
       return opentype.parse(buf);
     }
 
-    async function loadFontFromUrl(url){
+    async function loadFontFromUrl(url) {
       const res = await fetch(url);
       if (!res.ok) throw new Error(`Font fetch failed: ${res.status}`);
       const buf = await res.arrayBuffer();
@@ -162,11 +278,11 @@
 
     // Optional auto-load ./font.ttf
     (async () => {
-      try{
+      try {
         const font = await loadFontFromUrl("./font.ttf");
         render(font);
       } catch {
-        // ignore: user can choose a font file
+        // user can choose a font file
       }
     })();
 
@@ -178,4 +294,5 @@
     });
   </script>
 </body>
+
 </html>
