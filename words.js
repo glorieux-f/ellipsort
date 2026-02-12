@@ -13,17 +13,22 @@ const words2 = [
 
 const words = [
   // Prépositons
-  "à", "de", "puis",
-  // pronoms
-  "je", "tu", "on", "iel", "il", "elle", "vous", "nous", "eux",
+  "à", "après", "avant", "avec", "chez", "contre", "dans", "de", "depuis", "derrière", "dès", "devant", "durant", "en", "entre", "envers", "hormis", "jusque", "malgré", "par", "parmi", "pendant", "pour", "sans", "sauf", "selon", "sous", "sur", "vers",
+  // Connectecteurs
+  "afin", "aussi", "car", "comme", "comment", "donc", "dont", "et", "lorsque", "mais", "non", "ou", "où", "parce que", "pourquoi", "puisque", "quand", "que", "qui", "quoi", "quoique", "si", "sinon", "soit", "tel",
+  // personnels
+  "eux", "je", "moi", "nous", "on", "soi", "toi", "tu", "vous", 
   // auxilliaires
-  "être", "avoir", "faire", 
+  "aller", "avoir", "devoir", "dire", "donner", "être", "faire", "falloir", "pouvoir", "prendre", "trouver", "venir", "voir", "vouloir",
   // Adverbes
-  "autant", "avant", "après", "beaucoup", "encore", "ici", "là", "loin", "moins", "peu", "plus", "près", "tard", "tôt", "trop", 
+  "ailleurs", "alors", "ainsi", "assez", "aussi", "autant", "aujourd'hui", "beaucoup", "bien", "bientôt", "cependant", "certainement", "dehors", "déjà", "demain", "encore", "enfin", "ensuite", "hier", "ici", "jamais", "là", "maintenant", "même", "moins", "parfois", "peu", "peut-être", "plus", "près", "presque", "probablement", "rarement", "seulement", "simplement", "souvent", "surtout", "tard", "tôt", "toujours", "très", "trop", "vite", "vraiment",
+
   // Adjectifs
-  "assis", "bas", "beau", "blanc", "bleu", "bon", "calme", "carré", "chaud", "cher", "clair", "content", "couché", "court", "creux", "cuit", "dangereux", "dernier", "différent", "doux", "dur", "égal", "électrique", "entier", "facile", "fatigué", "fort", "fou", "froid", "gentil", "grand", "gris", "gros", "haut", "humide", "important", "jaune", "jeune", "large", "lisse", "loin", "long", "lourd", "malade", "mauvais", "méchant", "même", "mince", "mouillé", "moyen", "mort", "neuf", "noir", "nu", "petit", "plat", "plein", "premier", "propre", "rond", "rouge", "roux", "sale", "sec", "second", "seul", "solide", "sombre", "tordu", "tranquille", "usé", "utile", "vert", "vide", "vieux", "vivant", 
+  "assis", "bas", "beau", "blanc", "bleu", "bon", "calme", "carré", "chaud", "cher", "clair", "content", "couché", "court", "creux", "cuit", "dangereux", "dernier", "différent", "doux", "dur", "égal", "électrique", "entier", "facile", "fatigué", "fort", "fou", "froid", "gentil", "grand", "gris", "gros", "haut", "humide", "important", "jaune", "jeune", "large", "lisse", "loin", "long", "lourd", "malade", "mauvais", "méchant", "mince", "mouillé", "moyen", "mort", "neuf", "noir", "nu", "petit", "plat", "plein", "premier", "propre", "rond", "rouge", "roux", "sale", "sec", "second", "seul", "solide", "sombre", "tordu", "tranquille", "usé", "utile", "vert", "vide", "vieux", "vivant", 
+  // substantifs
+  "chose", "jour", "lieu", "moment", "monde", "personne", "temps", "vie",
   // déterminants
-  "la", "le", "les", "el", "un", "une", "des", 
+  "aucun", "quelques", "tous", "tout", "un", "une",
   // ponctuation
   " … ", ".", ",", ":", "?", "!", "(", ")", "«", "»",
    "—", "+", "/", "×", "=", "≠", "<", ">", "∑", "%", "↑", "↓", "←", "→", "↔",  

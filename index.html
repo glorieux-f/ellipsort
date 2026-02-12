@@ -8,8 +8,8 @@
 
   <style>
     :root {
-      --cardW: 95mm;
-      --cardH: 32mm;
+      --cardW: 140mm;
+      --cardH: 45mm;
       --gap: 10px;
       --stroke: 1px solid #000;
     }
@@ -115,7 +115,7 @@
     // ============================================================
     const FONT_FILES = {
       "w1": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-Medium.ttf",
-      "w2": "./fonts/Merriweather/static/Merriweather_24pt-Light.ttf",
+      "w2": "./fonts/Merriweather/static/Merriweather_24pt-Regular.ttf",
       "w3": "./fonts/Merriweather/static/Merriweather_24pt-Medium.ttf",
       "w4": "./fonts/Merriweather/static/Merriweather_24pt-Medium.ttf",
       "w7": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-SemiBold.ttf",
@@ -388,8 +388,8 @@
 
       clearDeck();
 
-      const CARDS_PER_ROW = 3;
-      const ROWS_PER_PAGE = 6;
+      const CARDS_PER_ROW = 2;
+      const ROWS_PER_PAGE = 4;
       const CARDS_PER_PAGE = CARDS_PER_ROW * ROWS_PER_PAGE;
 
       // always print full pages (blanks added)
