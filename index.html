@@ -1,37 +1,100 @@
 <!doctype html>
 <html lang="en">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Cards: per-length font instance selection</title>
 
   <style>
-    :root{
-      --cardW: 9cm;
+    :root {
+      --cardW: 95mm;
+      --cardH: 32mm;
       --gap: 10px;
       --stroke: 1px solid #000;
-      --pad: 0;
     }
 
-    body{ margin:16px; background:#fff; color:#000; font-family: system-ui, sans-serif; }
-    #deck{ display:flex; flex-wrap:wrap; gap:var(--gap); align-items:flex-start; }
+    body {
+      margin: 16px;
+      background: #fff;
+      color: #000;
+      font-family: system-ui, sans-serif;
+    }
 
-    .card{
+    #deck {
+      display: block;
+    }
+
+    /* Each page is built by JS */
+    .page {
+      display: block;
+      height: 210mm;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: stretch;
+      page-break-after: always;
+      break-after: page;
+    }
+
+    /* Each row is built by JS */
+    .row {
+      display: flex;
+      justify-content: center;
+      border-top: var(--stroke);
+      /* side-to-side cut line */
+    }
+
+    /* bottom cut line for last row in each page */
+    .page .row:last-child {
+      border-bottom: var(--stroke);
+    }
+
+    .card {
       width: var(--cardW);
-      aspect-ratio: 9 / 3;
-      border: var(--stroke);
-      border-radius: 0;
-      box-sizing: border-box;
-      padding: var(--pad);
+      height: var(--cardH);
       overflow: hidden;
+      border: 0;
+      border-left: var(--stroke);
+      padding: 1mm 0 0 0;
     }
-    .card svg{ width:100%; height:100%; display:block; }
-    .card path{ fill:#000; }
 
-    @media print{
-      body{ margin:0; }
-      #deck{ gap:6mm; }
-      .card{ break-inside: avoid; }
+
+    /* right outer cut line */
+    .row .card:last-child {
+      border-right: var(--stroke);
+    }
+
+    .card svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .card path {
+      fill: #000;
+    }
+
+    @media print {
+      @page {
+        size: A4 landscape;
+        margin: 5mm;
+      }
+
+      body {
+        margin: 0;
+      }
+
+      .card {
+        break-inside: avoid;
+      }
+
+      .page:last-of-type {
+        page-break-after: auto;
+        break-after: auto;
+      }
     }
   </style>
 
@@ -54,20 +117,16 @@
       "w1": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-Medium.ttf",
       "w2": "./fonts/Merriweather/static/Merriweather_24pt-Light.ttf",
       "w3": "./fonts/Merriweather/static/Merriweather_24pt-Medium.ttf",
-      "light24c": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-Light.ttf",
-      "light24": "./fonts/Merriweather/static/Merriweather_24pt-Light.ttf",
-      "extrabold24c": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-ExtraBold.ttf",
-      "extrabold24": "./fonts/Merriweather/static/Merriweather_24pt-ExtraBold.ttf",
-      "light120c": "./fonts/Merriweather/static/Merriweather_120pt_SemiCondensed-Light.ttf",
-      "extrabold120c": "./fonts/Merriweather/static/Merriweather_120pt_SemiCondensed-ExtraBold.ttf",
-      "extrabold120": "./fonts/Merriweather/static/Merriweather_120pt-ExtraBold.ttf",
-
+      "w4": "./fonts/Merriweather/static/Merriweather_24pt-Medium.ttf",
+      "w7": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-SemiBold.ttf",
+      "w10": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-ExtraBold.ttf",
+      "big": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-SemiBold.ttf",
     };
 
     // Load every font in the map up-front.
     // (If this is too heavy later, you can prune the map or lazy-load, but you asked for preload.)
-    const fonts = {};         // key -> opentype.Font
-    const fitters = {};       // key -> fitWord function
+    const fonts = new Map();         // key -> opentype.Font
+    const fitters = new Map();       // key -> fitWord function
 
     async function loadAllFonts() {
       const entries = Object.entries(FONT_FILES);
@@ -75,8 +134,24 @@
         const res = await fetch(url);
         if (!res.ok) throw new Error(`Font fetch failed: ${res.status} ${url}`);
         const buf = await res.arrayBuffer();
-        fonts[key] = opentype.parse(buf);
+        const font = opentype.parse(buf);
+        fonts.set(key, font);
       }
+    }
+
+    function getFont(fontKey) {
+      const font = fonts.get(fontKey);
+      if (!font) throw new Error(`Missing fontKey in FONT_FILES: ${fontKey}`);
+      return font;
+    }
+
+    function getFitter(fontKey) {
+      let fitter = fitters.get(fontKey);
+      if (!fitter) {
+        fitter = makeFitter(getFont(fontKey));
+        fitters.set(fontKey, fitter);
+      }
+      return fitter;
     }
 
     // ============================================================
@@ -95,20 +170,16 @@
     // Keep what worked for you; you can tune it later.
     const HEIGHT_REF = "?g";
 
-    // Tracking is intentionally controlled ONLY in the if/else chain (below).
-    // This global default is just a fallback.
-    const DEFAULT_TRACKING_EM = 0.00;
-
     const deck = document.getElementById("deck");
 
-    function svgEl(name){
+    function svgEl(name) {
       return document.createElementNS("http://www.w3.org/2000/svg", name);
     }
-    function clearDeck(){
+    function clearDeck() {
       while (deck.firstChild) deck.removeChild(deck.firstChild);
     }
 
-    function getXHeightInPathUnits(font){
+    function getXHeightInPathUnits(font) {
       const scale = FONT_SIZE / font.unitsPerEm;
       const os2 = font.tables && font.tables.os2;
       if (os2 && typeof os2.sxHeight === "number" && os2.sxHeight > 0) {
@@ -120,18 +191,24 @@
       return Math.max(1, -yTop);
     }
 
-    function buildWordPathHorizontal(font, word, trackingEm){
+    function buildWordPathHorizontal(
+      word, 
+      font, 
+      letterSpacingEm = 0, 
+      padLeftEm = 0, 
+      padRightEm = 0
+    ) {
       const scale = FONT_SIZE / font.unitsPerEm;
-      const trackingPx = trackingEm * FONT_SIZE;
+      const trackingPx = letterSpacingEm * FONT_SIZE;
 
       const p = new opentype.Path();
       let x = 0;
       let prev = null;
 
-      for (let i = 0; i < word.length; i++){
+      for (let i = 0; i < word.length; i++) {
         const glyph = font.charToGlyph(word[i]);
 
-        if (prev){
+        if (prev) {
           x += font.getKerningValue(prev, glyph) * scale;
           x += trackingPx; // tracking here
         }
@@ -143,15 +220,18 @@
         prev = glyph;
       }
 
-      return { path: p, xStart: 0, xEnd: x };
+      const padLeftPx = padLeftEm * FONT_SIZE;
+      const padRightPx = padRightEm * FONT_SIZE;
+
+      return { path: p, xStart: -padLeftPx, xEnd: x + padRightPx };
     }
 
-    function makeFitter(font, trackingEmForRef){
+    function makeFitter(font) {
       const targetW = VIEW_W - 2 * VB_PAD_X;
       const targetH = VIEW_H - 2 * VB_PAD_Y;
 
       // constant vertical scale from ref string
-      const ref = buildWordPathHorizontal(font, HEIGHT_REF, trackingEmForRef);
+      const ref = buildWordPathHorizontal(HEIGHT_REF, font);
       const refBB = ref.path.getBoundingBox();
       const refTop = Math.min(refBB.y1, refBB.y2);
       const refBot = Math.max(refBB.y1, refBB.y2);
@@ -163,7 +243,7 @@
       const xHeight = getXHeightInPathUnits(font);
       const baselineY = (VB_PAD_Y + targetH / 2) + sy * (xHeight / 2);
 
-      return function fitWord(out){
+      return function fitWord(out, valign) {
         const { path, xStart, xEnd } = out;
         const bb = path.getBoundingBox();
 
@@ -177,7 +257,13 @@
         const midX = (left + right) / 2;
         const tx = (VB_PAD_X + targetW / 2) - midX * sx;
 
-        const ty = baselineY;
+        const top = Math.min(bb.y1, bb.y2);
+        const bot = Math.max(bb.y1, bb.y2);
+        const midY = (top + bot) / 2;
+
+        const ty = (valign === "bbox")
+          ? (VB_PAD_Y + targetH / 2) - midY * sy
+          : baselineY;
 
         return {
           d: path.toPathData(2),
@@ -186,17 +272,38 @@
       };
     }
 
-    function buildCard(font, word, trackingEm, fitWord){
+    function buildBlankCard() {
       const card = document.createElement("div");
       card.className = "card";
 
       const svg = svgEl("svg");
       svg.setAttribute("viewBox", `0 0 ${VIEW_W} ${VIEW_H}`);
       svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+      card.appendChild(svg);
 
-      const out = buildWordPathHorizontal(font, word, trackingEm);
-      const fitted = fitWord(out);
+      return card;
+    }
 
+    function buildCard(style) {
+      const font = getFont(style.fontKey);
+      const fitter = getFitter(style.fontKey);
+
+
+      const out = buildWordPathHorizontal(
+        style.word,
+        font, 
+        style.letterSpacingEm,
+        style.padLeftEm,
+        style.padRightEm
+      );
+      const fitted = fitter(out, style.valign);
+
+      const card = document.createElement("div");
+      card.className = "card";
+
+      const svg = svgEl("svg");
+      svg.setAttribute("viewBox", `0 0 ${VIEW_W} ${VIEW_H}`);
+      svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
       const g = svgEl("g");
       g.setAttribute("transform", fitted.transform);
 
@@ -213,14 +320,15 @@
     // 3) ONE SINGLE PLACE TO TUNE: if/else chain
     //    You adjust only this block to test visually.
     // ============================================================
-    function chooseStyle(rawWord) {
+    function getStyle(rawWord) {
       const len = rawWord.length;
 
       // Default outputs:
-      let fontKey = "extrabold120c";
-      let trackingEm = DEFAULT_TRACKING_EM;
-      let padLeft = 1;   // number of regular spaces to add
-      let padRight = 1;
+      let fontKey = "w4";
+      let letterSpacingEm = 0.00;
+      let padLeftEm = 0.1;
+      let padRightEm = 0.1;
+      let valign = "xheight";
 
       // ---- ONLY EDIT BELOW THIS LINE ----
       if (false) {
@@ -228,61 +336,97 @@
       }
       else if (len <= 1) {
         fontKey = "w1";
-        padLeft = 2; padRight = 2;
+        padLeftEm = 1;
+        padRightEm = 1;
+        valign = "bbox";
       }
       else if (len <= 2) {
         fontKey = "w2";
-        trackingEm = -0.006;
-        padLeft = 1; padRight = 1;
-      } 
-        else if (len <= 3) {
+        letterSpacingEm = 0.05;
+        padLeftEm = 0.5;
+        padRightEm = 0.5;
+        valign = "bbox";
+      }
+      else if (len <= 3) {
         fontKey = "w3";
-        trackingEm = 0.000;
-        padLeft = 1; padRight = 1;
-      } else if (len <= 4) {
-        fontKey = "extrabold24c";
-        trackingEm = 0.002;
-        padLeft = 1; padRight = 1;
-      } else {
-        fontKey = "extrabold120";
-        trackingEm = 0.004;    // more air for long words
-        padLeft = 0; padRight = 0;
+        padLeftEm = 0.3;
+        padRightEm = 0.3;
+        letterSpacingEm = 0.2;
+        valign = "bbox";
+      }
+      else if (len <= 4) {
+        fontKey = "w4";
+      }
+      /* 
+      else if (len <= 7) {
+        fontKey = "w7";
+      } else if (len <= 10) {
+        fontKey = "w10";
+      }
+      */
+      else {
+        fontKey = "w7";
       }
       // ---- ONLY EDIT ABOVE THIS LINE ----
 
-      const word = " ".repeat(padLeft) + rawWord + " ".repeat(padRight);
-      return { fontKey, trackingEm, word };
+      const word = rawWord;
+      return {
+        "word": word,
+        "fontKey": fontKey,
+        "letterSpacingEm": letterSpacingEm,
+        "padLeftEm": padLeftEm,
+        "padRightEm": padRightEm,
+        "valign": valign,
+      };
     }
 
     // ============================================================
     // 4) Render (preload everything, then build)
     // ============================================================
-    async function main(){
+    async function main() {
       await loadAllFonts();
-
-      // Build fitters per fontKey, using that fontKey’s current ref-tracking.
-      // Since tracking is chosen per word, we create fitters lazily per (fontKey, trackingEm).
-      // To keep logic centralized, we cache by a combined key.
-      const fitterByKey = {}; // `${fontKey}|${trackingEm}` -> function
 
       clearDeck();
 
-      for (const raw of words){
-        const { fontKey, trackingEm, word } = chooseStyle(raw);
+      const CARDS_PER_ROW = 3;
+      const ROWS_PER_PAGE = 6;
+      const CARDS_PER_PAGE = CARDS_PER_ROW * ROWS_PER_PAGE;
 
-        const font = fonts[fontKey];
-        if (!font) throw new Error(`Missing fontKey in FONT_FILES: ${fontKey}`);
+      // always print full pages (blanks added)
+      const totalCards = Math.ceil(words.length / CARDS_PER_PAGE) * CARDS_PER_PAGE;
 
-        const fk = `${fontKey}|${trackingEm}`;
-        if (!fitterByKey[fk]) {
-          fitterByKey[fk] = makeFitter(font, trackingEm);
+      let pageEl = null;
+      let rowEl = null;
+
+      for (let i = 0; i < totalCards; i++) {
+        if (i % CARDS_PER_PAGE === 0) {
+          pageEl = document.createElement("div");
+          pageEl.className = "page";
+          deck.appendChild(pageEl);
         }
 
-        deck.appendChild(buildCard(font, word, trackingEm, fitterByKey[fk]));
+        if (i % CARDS_PER_ROW === 0) {
+          rowEl = document.createElement("div");
+          rowEl.className = "row";
+          pageEl.appendChild(rowEl);
+        }
+
+        const raw = words[i];
+
+        // blanks to complete the 6×3 matrix
+        if (typeof raw !== "string") {
+          rowEl.appendChild(buildBlankCard());
+          continue;
+        }
+
+        const style = getStyle(raw);
+        rowEl.appendChild(buildCard(style));
       }
+
     }
 
     main().catch(console.error);
   </script>
 </body>
+
 </html>
