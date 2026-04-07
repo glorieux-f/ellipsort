@@ -10,7 +10,6 @@
     :root {
       --cardW: 140mm;
       --cardH: 45mm;
-      --gap: 10px;
       --stroke: 1px solid #000;
     }
 
@@ -28,7 +27,7 @@
     /* Each page is built by JS */
     .page {
       display: block;
-      height: 210mm;
+      height: 297mm;
       margin: 0;
       padding: 0;
       display: flex;
@@ -43,7 +42,6 @@
     .row {
       display: flex;
       justify-content: center;
-      border-top: var(--stroke);
       /* side-to-side cut line */
     }
 
@@ -52,7 +50,17 @@
       border-bottom: var(--stroke);
     }
 
-    .card {
+    .card.vertical {
+      width: 40mm;
+      height: 140mm;
+      padding: 5mm 5mm;
+      box-sizing: border-box;
+      border-left: var(--stroke);
+      border-top: var(--stroke);
+      overflow: hidden;
+    }
+
+    .card.horizontal {
       width: var(--cardW);
       height: var(--cardH);
       overflow: hidden;
@@ -78,10 +86,12 @@
     }
 
     @media print {
+      /*
       @page {
         size: A4 landscape;
         margin: 5mm;
       }
+      */
 
       body {
         margin: 0;
@@ -96,6 +106,38 @@
         break-after: auto;
       }
     }
+
+    @font-face {
+      font-family: "Recursive";
+      src:
+        url("./fonts/Recursive/Recursive_VF_1.085.ttf") format('truetype');
+      font-display: swap;
+
+      /* Declare supported axis ranges if you know them (recommended) */
+      font-weight: 100 900;          /* wght */
+    }
+    @font-face {
+      font-family: "Recursive-static";
+      src:
+        url("./fonts/Recursive/Recursive-static.ttf") format('truetype');
+      font-display: swap;
+
+      /* Declare supported axis ranges if you know them (recommended) */
+    }
+
+    h1.recursive {
+      font-family: "Recursive";
+      font-variation-settings: "MONO" 1;
+      font-weight: 500;
+      font-size: 6vw;
+    }
+    h1.recursive-static {
+      font-family: "Recursive-static";
+      font-size: 6vw;
+      text-align: center;
+      margin: 0;
+    }
+
   </style>
 
   <script src="https://cdn.jsdelivr.net/npm/opentype.js@1.3.4/dist/opentype.min.js"></script>
@@ -103,7 +145,9 @@
 </head>
 
 <body>
-  <div id="deck"></div>
+  <div id="deck">
+
+  </div>
 
   <script>
     if (typeof words === "undefined" || !Array.isArray(words)) {
@@ -114,6 +158,14 @@
     // 1) FREE MAP OF STATIC FONT INSTANCES (key -> path)
     // ============================================================
     const FONT_FILES = {
+      
+      "default": "recursive-static.ttf",
+      // "default": "./fonts/Roboto_Mono/static/RobotoMono-Medium.ttf"
+      // "default": "./fonts/Inconsolata/static/Inconsolata_ExtraCondensed-Bold.ttf",
+      // "big": "./fonts/Inconsolata/static/Inconsolata-SemiBold.ttf",
+      // "default": "./fonts/Red_Hat_Mono/static/RedHatMono-Bold.ttf",
+
+      /*
       "w1": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-Medium.ttf",
       "w2": "./fonts/Merriweather/static/Merriweather_24pt-Regular.ttf",
       "w3": "./fonts/Merriweather/static/Merriweather_24pt-Medium.ttf",
@@ -121,6 +173,7 @@
       "w7": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-SemiBold.ttf",
       "w10": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-ExtraBold.ttf",
       "big": "./fonts/Merriweather/static/Merriweather_24pt_SemiCondensed-SemiBold.ttf",
+      */
     };
 
     // Load every font in the map up-front.
@@ -191,11 +244,137 @@
       return Math.max(1, -yTop);
     }
 
+    function buildWordPathVertical(
+      word,
+      font,
+      {
+        rowGapEm = 0.0,        // gap BETWEEN ink boxes (em). 0 => bbox-touching
+        alignX = "center",     // "left" | "center" | "right"
+        padEm = 0.0,           // set to 0 while debugging spacing
+      } = {}
+    ) {
+      const scale = FONT_SIZE / font.unitsPerEm;
+      const gapPx = rowGapEm * FONT_SIZE;
+
+      // Measure a stable column width (advanceWidth is appropriate for monospace)
+      let cellW = 1;
+      const items = [];
+
+      for (const ch of word) {
+        const glyph = font.charToGlyph(ch);
+        const gp0 = glyph.getPath(0, 0, FONT_SIZE);
+        const bb0 = gp0.getBoundingBox();
+
+        const advPx = (glyph.advanceWidth || font.unitsPerEm) * scale;
+        cellW = Math.max(cellW, advPx);
+
+        // ink box at baseline y=0
+        const inkTop = Math.min(bb0.y1, bb0.y2);
+        const inkBot = Math.max(bb0.y1, bb0.y2);
+        const inkLeft = Math.min(bb0.x1, bb0.x2);
+        const inkRight = Math.max(bb0.x1, bb0.x2);
+
+        items.push({ glyph, bb0, inkTop, inkBot, inkLeft, inkRight });
+      }
+
+      const p = new opentype.Path();
+
+      let cursorY = 0;        // where the next glyph's ink TOP should land (in path units)
+      let minX = Infinity;
+      let maxX = -Infinity;
+
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i];
+
+        // Place glyph so that its inkTop == cursorY
+        const baselineY = cursorY - it.inkTop;
+
+        // Horizontal alignment inside the column
+        let xShift;
+        if (alignX === "left") {
+          xShift = -it.inkLeft;
+        } else if (alignX === "right") {
+          xShift = cellW - it.inkRight;
+        } else {
+          const inkMidX = (it.inkLeft + it.inkRight) / 2;
+          xShift = (cellW / 2) - inkMidX;
+        }
+
+        p.extend(it.glyph.getPath(xShift, baselineY, FONT_SIZE));
+
+        // Update overall X extents in placed coordinates
+        minX = Math.min(minX, xShift + it.inkLeft);
+        maxX = Math.max(maxX, xShift + it.inkRight);
+
+        // Next glyph inkTop = current glyph inkBottom + gap
+        const placedInkBottom = baselineY + it.inkBot;
+        cursorY = placedInkBottom + gapPx;
+      }
+
+      const padPx = padEm * FONT_SIZE;
+      const totalH = cursorY - gapPx; // remove last added gap
+
+      return {
+        path: p,
+        minX: minX - padPx,
+        minY: 0 - padPx,
+        w: (maxX - minX) + 2 * padPx,
+        h: totalH + 2 * padPx,
+      };
+    }
+
+    function rowGapEm(len, {
+      max = 0.1,   // gap for very short words
+      min = 0.03,  // asymptotic minimum gap
+      k   = 0.30    // decay rate (bigger => drops faster)
+    } = {}) {
+      if (len <= 1) return 0;                 // no “between-letter” gaps
+      return min + (max - min) * Math.exp(-k * (len - 1));
+    }
+
+    function buildCardVertical(style) {
+      const font = getFont(style.fontKey);
+      const len = style.word.length;
+      const out = buildWordPathVertical(
+        style.word,
+        font,
+        {
+          lineHeight: style.vLineHeight ?? 0.7,
+          rowGapEm: style.vRowGapEm ?? rowGapEm(len),
+          alignX: style.vAlignX ?? "center",
+        }
+      );
+
+      // Padding in font units (because path is in FONT_SIZE units)
+      const pad = (style.vPadEm ?? 0.08) * FONT_SIZE;
+
+      const card = document.createElement("div");
+      card.className = "card vertical";
+
+      const svg = svgEl("svg");
+
+      // KEY: per-word viewBox
+      svg.setAttribute("viewBox", `${out.minX} ${out.minY} ${out.w} ${out.h}`);
+      // If you want “fill the card” (distort to both dimensions):
+      svg.setAttribute("preserveAspectRatio", "none");
+
+      // If you want no distortion (will NOT fill both dims):
+      // svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
+
+      const path = svgEl("path");
+      path.setAttribute("d", out.path.toPathData(2));
+
+      svg.appendChild(path);
+      card.appendChild(svg);
+      return card;
+    }
+
+
     function buildWordPathHorizontal(
-      word, 
-      font, 
-      letterSpacingEm = 0, 
-      padLeftEm = 0, 
+      word,
+      font,
+      letterSpacingEm = 0,
+      padLeftEm = 0,
       padRightEm = 0
     ) {
       const scale = FONT_SIZE / font.unitsPerEm;
@@ -274,7 +453,7 @@
 
     function buildBlankCard() {
       const card = document.createElement("div");
-      card.className = "card";
+      card.className = "card vertical";
 
       const svg = svgEl("svg");
       svg.setAttribute("viewBox", `0 0 ${VIEW_W} ${VIEW_H}`);
@@ -291,7 +470,7 @@
 
       const out = buildWordPathHorizontal(
         style.word,
-        font, 
+        font,
         style.letterSpacingEm,
         style.padLeftEm,
         style.padRightEm
@@ -322,7 +501,16 @@
     // ============================================================
     function getStyle(rawWord) {
       const len = rawWord.length;
+      let fontKey = "default";
+      let word = rawWord;
+      if (false) {
 
+      }
+      else if (len >= 8) {
+        // fontKey = "big";
+      }
+
+      /*
       // Default outputs:
       let fontKey = "w4";
       let letterSpacingEm = 0.00;
@@ -363,20 +551,15 @@
       } else if (len <= 10) {
         fontKey = "w10";
       }
-      */
       else {
         fontKey = "w7";
       }
+      */
       // ---- ONLY EDIT ABOVE THIS LINE ----
 
-      const word = rawWord;
       return {
         "word": word,
         "fontKey": fontKey,
-        "letterSpacingEm": letterSpacingEm,
-        "padLeftEm": padLeftEm,
-        "padRightEm": padRightEm,
-        "valign": valign,
       };
     }
 
@@ -388,8 +571,8 @@
 
       clearDeck();
 
-      const CARDS_PER_ROW = 2;
-      const ROWS_PER_PAGE = 4;
+      const CARDS_PER_ROW = 5;
+      const ROWS_PER_PAGE = 2;
       const CARDS_PER_PAGE = CARDS_PER_ROW * ROWS_PER_PAGE;
 
       // always print full pages (blanks added)
@@ -420,7 +603,7 @@
         }
 
         const style = getStyle(raw);
-        rowEl.appendChild(buildCard(style));
+        rowEl.appendChild(buildCardVertical(style));
       }
 
     }
